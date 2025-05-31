@@ -10,6 +10,7 @@ public class DevopsLearningController {
 
     @GetMapping("/Start")
     public String start() {
+        System.out.println("Flow entered here");
         return "Devops project running";
     }
 }

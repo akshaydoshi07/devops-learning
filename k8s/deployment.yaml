@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: devops-learning
-        image: devops-learning:latest
+        image: akshaydoshi07/devops-learning:latest
         ports:
         - containerPort: 8888
