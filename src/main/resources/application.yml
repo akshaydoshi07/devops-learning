@@ -1,1 +1,8 @@
-spring.application.name=devops-learning
+spring:
+  application:
+    name: devops-learning  # Your custom app name
+
+server:
+  port: 8888  # Change this to any port you want
+
+
