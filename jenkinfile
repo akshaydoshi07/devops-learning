@@ -1,0 +1,67 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven 'Maven' // Name as defined in "Global Tool Configuration"
+    }
+    
+    environment {
+        BRANCH_NAME = 'master'
+        MODULE_NAME = 'devops-learning'
+        KUBECONFIG = 'C:\\Jenkins\\kubeconfig'
+        DOCKERHUB_REPO = 'akshaydoshi07/devops-learning'
+        IMAGE_NAME = 'image-name'
+		APP_PORT = 8888
+		docker_image_name = ''
+		docker_tag_name = ''
+    }
+
+    stages {
+        stage('Clone Repo') {
+            steps {
+                echo 'Pulling Code...'
+                echo "Build Number: ${BUILD_NUMBER}"
+                echo "Build ID: ${BUILD_ID}"
+                echo "Build Tag: ${BUILD_TAG}"
+                git branch: 'master', url: 'https://github.com/akshaydoshi07/devops-learning.git'
+            }
+        }
+
+        stage('Build App') {
+            steps {
+                echo 'Building Code...'
+                bat 'mvn clean package -DskipTests'
+            }
+        }
+        
+        stage('Build and Push Docker Image') {
+            steps {
+                echo 'Builind image and pushing on docker hub...'
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        def datetime =  new Date().format('yyyy-MM-dd')
+                        echo "datetime: ${datetime}"
+                        docker_tag_name = "${datetime}_${BUILD_NUMBER}"  // or using jenkin BUILD_ID for tag name
+                        echo "docker_tag_name: ${docker_tag_name}"
+                        docker_image_name = "${env.IMAGE_NAME}-${env.MODULE_NAME}-${env.BRANCH_NAME}"
+                        echo "docker_image_name: ${docker_image_name}"
+                        bat "docker build -t %DOCKER_USER%/${docker_image_name}:${docker_tag_name} ."
+                        bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+                        bat "docker push %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
+                    }
+                }
+            }
+        }
+		
+        stage('Run Container') {
+            steps {
+				withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+					script {
+						def tag = "${BUILD_NUMBER}"
+						bat "docker run -d -p ${APP_PORT}:${APP_PORT} --name myapp-${docker_tag_name} %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
+					}
+				}
+            }
+        }
+    }
+}
