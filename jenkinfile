@@ -2,65 +2,117 @@ pipeline {
     agent any
     
     tools {
-        maven 'Maven' // Name as defined in "Global Tool Configuration"
+        maven 'Maven' // Use the Maven installation configured in Jenkins Global Tools
     }
     
     environment {
+        // Basic metadata about the project and deployment
         BRANCH_NAME = 'master'
         MODULE_NAME = 'devops-learning'
-        KUBECONFIG = 'C:\\Jenkins\\kubeconfig'
-        DOCKERHUB_REPO = 'akshaydoshi07/devops-learning'
-        IMAGE_NAME = 'image-name'
-		APP_PORT = 8888
-		docker_image_name = ''
-		docker_tag_name = ''
+        KUBECONFIG = 'C:\\Jenkins\\kubeconfig' // Path to kubeconfig (if needed for Kubernetes later)
+        DOCKERHUB_REPO = 'akshaydoshi07/devops-learning' // Docker Hub repo
+        IMAGE_NAME = 'image-name' // Base image name
+        APP_PORT = 8888 // Application port (container and host)
+
+        // Will be populated at runtime
+        docker_image_name = ''
+        docker_tag_name = ''
     }
 
     stages {
         stage('Clone Repo') {
             steps {
-                echo 'Pulling Code...'
+                echo '📥 Pulling source code from GitHub...'
                 echo "Build Number: ${BUILD_NUMBER}"
                 echo "Build ID: ${BUILD_ID}"
                 echo "Build Tag: ${BUILD_TAG}"
+
+                // Clone the repo from GitHub master branch
                 git branch: 'master', url: 'https://github.com/akshaydoshi07/devops-learning.git'
             }
         }
 
         stage('Build App') {
             steps {
-                echo 'Building Code...'
+                echo '⚙️ Building the Maven project...'
+
+                // Run Maven build (skip tests for faster CI)
                 bat 'mvn clean package -DskipTests'
             }
         }
-        
+
         stage('Build and Push Docker Image') {
             steps {
-                echo 'Builind image and pushing on docker hub...'
+                echo '🐳 Building Docker image and pushing to Docker Hub...'
+
+                // Use stored credentials for Docker Hub login
                 withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     script {
+                        // Generate a unique tag using current date and Jenkins build number
                         def datetime =  new Date().format('yyyy-MM-dd')
                         echo "datetime: ${datetime}"
-                        docker_tag_name = "${datetime}_${BUILD_NUMBER}"  // or using jenkin BUILD_ID for tag name
+
+                        docker_tag_name = "${datetime}_${BUILD_NUMBER}"
                         echo "docker_tag_name: ${docker_tag_name}"
+
+                        // Final image name pattern: image-name-devops-learning-master
                         docker_image_name = "${env.IMAGE_NAME}-${env.MODULE_NAME}-${env.BRANCH_NAME}"
                         echo "docker_image_name: ${docker_image_name}"
+
+                        // Build the Docker image
                         bat "docker build -t %DOCKER_USER%/${docker_image_name}:${docker_tag_name} ."
+
+                        // Authenticate and push image to Docker Hub
                         bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
                         bat "docker push %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
                     }
                 }
             }
         }
-		
+
         stage('Run Container') {
             steps {
-				withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-					script {
-						def tag = "${BUILD_NUMBER}"
-						bat "docker run -d -p ${APP_PORT}:${APP_PORT} --name myapp-${docker_tag_name} %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
-					}
-				}
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        def tag = "${BUILD_NUMBER}"
+                        def containerName = "myapp-${docker_tag_name}"
+
+                        // 🔁 Step 1: Stop all currently running containers that match "myapp-*"
+                        bat """
+                        @echo off
+                        FOR /F %%i IN ('docker ps --filter "name=myapp-" --format "{{.ID}}"') DO docker stop %%i >nul 2>&1
+                        """
+
+                        // 🟢 Step 2: Start a new container with the current image
+                        bat """
+                        docker run -d -p ${APP_PORT}:${APP_PORT} --name ${containerName} %DOCKER_USER%/${docker_image_name}:${docker_tag_name}
+                        """
+
+                        // 🧹 Step 3: Keep the 1 running + 3 most recent stopped containers, delete the rest
+                        bat """
+                        @echo off
+                        setlocal enabledelayedexpansion
+                        set COUNT=0
+
+                        REM Collect all containers matching "myapp-*", most recent first
+                        for /f "tokens=*" %%i in ('docker ps -a --filter "name=myapp-" --format "{{.ID}}"') do (
+                            set /a COUNT+=1
+                            set CONTAINER_!COUNT!=%%i
+                        )
+
+                        REM Define how many containers to keep (1 running + 3 stopped = 4)
+                        set KEEP=4
+                        set /a DELETE_FROM=KEEP+1
+
+                        REM Delete containers beyond the 4 most recent
+                        if !COUNT! GEQ !DELETE_FROM! (
+                            for /l %%j in (!DELETE_FROM!,1,!COUNT!) do (
+                                call docker rm -f !CONTAINER_%%j! >nul 2>&1
+                            )
+                        )
+                        """
+                    }
+                }
             }
         }
     }
