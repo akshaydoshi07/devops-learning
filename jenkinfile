@@ -59,11 +59,13 @@ pipeline {
                         docker_image_name = "${env.IMAGE_NAME}-${env.MODULE_NAME}-${env.BRANCH_NAME}"
                         echo "docker_image_name: ${docker_image_name}"
 
+                        // Authenticate
+                        bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+
                         // Build the Docker image
                         bat "docker build -t %DOCKER_USER%/${docker_image_name}:${docker_tag_name} ."
 
-                        // Authenticate and push image to Docker Hub
-                        bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+                        // push image to Docker Hub
                         bat "docker push %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
                     }
                 }
@@ -77,39 +79,52 @@ pipeline {
                         def tag = "${BUILD_NUMBER}"
                         def containerName = "myapp-${docker_tag_name}"
 
-                        // 🔁 Step 1: Stop all currently running containers that match "myapp-*"
+                        // 🔁 Step 1: Stop all running containers matching "myapp-*"
+                        echo "🛑 Stopping running containers matching 'myapp-*'"
                         bat """
-                        @echo off
-                        FOR /F %%i IN ('docker ps --filter "name=myapp-" --format "{{.ID}}"') DO docker stop %%i >nul 2>&1
+                        @echo on
+                        echo Checking for running containers...
+                        for /f %%i in ('docker ps --filter "name=myapp-" --format "{{.ID}}"') do (
+                            echo Stopping container %%i
+                            docker stop %%i || echo Failed to stop container %%i
+                        )
+                        echo Done stopping containers.
                         """
 
-                        // 🟢 Step 2: Start a new container with the current image
+                        // 🟢 Step 2: Start the new container
+                        echo "🚀 Starting new container: ${containerName}"
                         bat """
                         docker run -d -p ${APP_PORT}:${APP_PORT} --name ${containerName} %DOCKER_USER%/${docker_image_name}:${docker_tag_name}
                         """
 
-                        // 🧹 Step 3: Keep the 1 running + 3 most recent stopped containers, delete the rest
+                        // 🧹 Step 3: Keep latest 4 containers only (1 running + 3 recent stopped)
+                        echo "🧹 Cleaning up old containers (keeping latest 4)"
                         bat """
                         @echo off
                         setlocal enabledelayedexpansion
                         set COUNT=0
 
-                        REM Collect all containers matching "myapp-*", most recent first
-                        for /f "tokens=*" %%i in ('docker ps -a --filter "name=myapp-" --format "{{.ID}}"') do (
+                        for /f %%i in ('docker ps -a --filter "name=myapp-" --format "{{.ID}}"') do (
                             set /a COUNT+=1
                             set CONTAINER_!COUNT!=%%i
                         )
 
-                        REM Define how many containers to keep (1 running + 3 stopped = 4)
                         set KEEP=4
                         set /a DELETE_FROM=KEEP+1
 
-                        REM Delete containers beyond the 4 most recent
                         if !COUNT! GEQ !DELETE_FROM! (
                             for /l %%j in (!DELETE_FROM!,1,!COUNT!) do (
+                                echo Removing container !CONTAINER_%%j!
                                 call docker rm -f !CONTAINER_%%j! >nul 2>&1
                             )
                         )
+                        endlocal
+                        """
+
+                        // 🧼 Step 4: Optionally clean up dangling (unused) images
+                        echo "🧼 Removing unused (dangling) Docker images"
+                        bat """
+                        docker image prune -f >nul 2>&1
                         """
                     }
                 }
