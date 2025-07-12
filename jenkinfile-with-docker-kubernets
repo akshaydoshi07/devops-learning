@@ -1,0 +1,95 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven 'Maven' // Use the Maven installation configured in Jenkins Global Tools
+    }
+    
+    environment {
+        // Basic metadata about the project and deployment
+        BRANCH_NAME = 'master'
+        MODULE_NAME = 'devops-learning'
+        KUBECONFIG = 'C:\\Jenkins\\kubeconfig' // Path to kubeconfig (if needed for Kubernetes later)
+        DOCKERHUB_REPO = 'akshaydoshi07' // Docker Hub repo
+        IMAGE_NAME = 'image-name' // Base image name
+        APP_PORT = 8888 // Application port (container and host)
+
+        // Will be populated at runtime
+        docker_image_name = ''
+        docker_tag_name = ''
+    }
+
+    stages {
+        stage('Clone Repo') {
+            steps {
+                echo '📥 Pulling source code from GitHub...'
+                echo "Build Number: ${BUILD_NUMBER}"
+                echo "Build ID: ${BUILD_ID}"
+                echo "Build Tag: ${BUILD_TAG}"
+
+                // Clone the repo from GitHub master branch
+                git branch: 'master', url: 'https://github.com/akshaydoshi07/devops-learning.git'
+            }
+        }
+
+        stage('Build App') {
+            steps {
+                echo '⚙️ Building the Maven project...'
+
+                // Run Maven build (skip tests for faster CI)
+                bat 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Build and Push Docker Image') {
+            steps {
+                echo '🐳 Building Docker image and pushing to Docker Hub...'
+
+                // Use stored credentials for Docker Hub login
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        // Generate a unique tag using current date and Jenkins build number
+                        def datetime =  new Date().format('yyyy-MM-dd')
+                        echo "datetime: ${datetime}"
+
+                        docker_tag_name = "${datetime}_${BUILD_NUMBER}"
+                        echo "docker_tag_name: ${docker_tag_name}"
+
+                        // Final image name pattern: image-name-devops-learning-master
+                        docker_image_name = "${env.IMAGE_NAME}-${env.MODULE_NAME}-${env.BRANCH_NAME}"
+                        echo "docker_image_name: ${docker_image_name}"
+                        
+                        // Authenticate
+                        bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+
+                        // Build the Docker image
+                        bat "docker build -t %DOCKER_USER%/${docker_image_name}:${docker_tag_name} ."
+
+                        // push image to Docker Hub
+                        bat "docker push %DOCKER_USER%/${docker_image_name}:${docker_tag_name}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo '🚀 Deploying to Minikube using kubectl...'
+
+                script {
+                    // Replace image tag in the deployment YAML on the fly
+                    bat """
+                    powershell -Command "(Get-Content k8s\\deployment.yaml) -replace 'IMAGE_PLACEHOLDER', '${DOCKERHUB_REPO}/${docker_image_name}:${docker_tag_name}' | Set-Content k8s\\deployment-temp.yaml"
+                    """
+
+                    // Apply the modified deployment and service YAMLs
+                    bat "kubectl apply -f k8s\\deployment-temp.yaml"
+                    bat "kubectl apply -f k8s\\service.yaml"
+
+                    // Optional: Wait for rollout to complete
+                    bat "kubectl rollout status deployment/${MODULE_NAME}"
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-learning
+  labels:
+    app: devops-learning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-learning
+  template:
+    metadata:
+      labels:
+        app: devops-learning
+    spec:
+      containers:
+      - name: devops-learning
+        image: akshaydoshi07/image-name-devops-learning-master:2025-07-05_46
+        ports:
+        - containerPort: 8888
