@@ -5,7 +5,7 @@ metadata:
   labels:
     app: devops-learning
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: devops-learning
@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: devops-learning
-        image: akshaydoshi07/devops-learning:latest
+        image: IMAGE_PLACEHOLDER
         ports:
         - containerPort: 8888

@@ -7,6 +7,6 @@ spec:
   selector:
     app: devops-learning
   ports:
-    - port: 80
+    - port: 8888
       targetPort: 8888
-      nodePort: 30080
+      nodePort: 30008
