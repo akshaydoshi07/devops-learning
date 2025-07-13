@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+
+    tools {
+        maven 'Maven' // Ensure Maven is configured in Jenkins Global Tools
+    }
+
+    environment {
+        BRANCH_NAME = 'master'
+        MODULE_NAME = 'devops-learning'
+        KUBECONFIG = '/home/jenkins/kubeconfig' // Linux-style kubeconfig path
+        DOCKERHUB_REPO = 'akshaydoshi07'
+        IMAGE_NAME = 'image-name'
+        APP_PORT = 8888
+
+        docker_image_name = ''
+        docker_tag_name = ''
+    }
+
+    stages {
+        stage('Clone Repo') {
+            steps {
+                echo '📥 Pulling source code from GitHub...'
+                echo "Build Number: ${BUILD_NUMBER}"
+                echo "Build ID: ${BUILD_ID}"
+                echo "Build Tag: ${BUILD_TAG}"
+
+                git branch: 'master', url: 'https://github.com/akshaydoshi07/devops-learning.git'
+            }
+        }
+
+        stage('Build App') {
+            steps {
+                echo '⚙️ Building the Maven project...'
+
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Build and Push Docker Image') {
+            steps {
+                echo '🐳 Building Docker image and pushing to Docker Hub...'
+
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        def datetime = new Date().format('yyyy-MM-dd')
+                        docker_tag_name = "ec2_${datetime}_${BUILD_NUMBER}"
+                        docker_image_name = "${IMAGE_NAME}-${MODULE_NAME}-${BRANCH_NAME}"
+                        def full_image_name = "${DOCKER_USER}/${docker_image_name}:${docker_tag_name}"
+
+                        echo "docker_tag_name: ${docker_tag_name}"
+                        echo "docker_image_name: ${docker_image_name}"
+                        echo "full_image_name: ${full_image_name}"
+
+                        sh """
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            docker build -t $DOCKER_USER/${docker_image_name}:${docker_tag_name} .
+                            docker push $DOCKER_USER/${docker_image_name}:${docker_tag_name}
+                        """
+                    }
+                }
+            }
+        }
+        stage('Run Container') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                                        script {
+                        def containerName = "myapp-${docker_tag_name}"
+						
+						// 🔁 Step 1: Stop all running containers matching "myapp-*"
+						echo "🛑 Stopping running containers matching 'myapp-*'"
+						sh '''
+						for id in $(docker ps --filter "name=myapp-" --format "{{.ID}}"); do
+							echo "Stopping container $id"
+							docker stop "$id" || echo "Failed to stop $id"
+						done
+						'''
+
+                        // 🚀 Step 2: Start the new container
+						echo "🚀 Starting new container: ${containerName}"
+						sh """
+						docker run -d -p ${APP_PORT}:${APP_PORT} --name ${containerName} $DOCKER_USER/${docker_image_name}:${docker_tag_name}
+						"""
+						
+						// 🧹 Step 3: Keep only 4 latest containers
+						echo "🧹 Cleaning up old containers (keeping latest 4)"
+						sh '''
+                        docker ps -a --filter "name=myapp-" --format "{{.ID}}" | sed -n '5,$p' | while read container_id; do
+                          echo "Removing old container $container_id"
+                          docker rm -f "$container_id" >/dev/null 2>&1 || true
+                        done
+                        '''
+                        
+						// 🧼 Step 4: Remove dangling images
+						echo "🧼 Removing unused (dangling) Docker images"
+						sh 'docker image prune -f'
+                    }
+                }
+            }
+        }
+    }
+}
